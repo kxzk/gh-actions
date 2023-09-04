@@ -1,0 +1,46 @@
+name: CI - DBT Sqlfmt
+
+on:
+  push:
+    branches:
+      - '*'
+      - '!master'
+
+jobs:
+  sql_files_changed:
+    runs-on: ubuntu-latest
+    outputs:
+      sql_files_diff: ${{ steps.check_sql_files.outputs.files }}
+    steps:
+      - uses: actions/checkout@v3
+        with:
+          fetch-depth: 2
+      - name: Get changed Sql files
+        id: check_sql_files
+        run: |
+          echo "files=$(git diff --name-only --diff-filter=ACMRT ${{ github.event.before }} ${{ github.event.after }} | grep .sql$ | xargs)" >> $GITHUB_OUTPUT
+  sql_fmt_files_changed:
+    runs-on: ubuntu-latest
+    needs: [sql_files_changed]
+    if: needs.sql_files_changed.outputs.sql_files_diff != ''
+    steps:
+      - uses: actions/checkout@v3
+      - name: Set up Python 3.10
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.10'
+      - name: Install Sqlfmt
+        run: |
+          pip install shandy-sqlfmt[jinjafmt]==0.16.0
+      - name: Format with Sqlfmt
+        run: |
+          sqlfmt ${{ needs.sql_files_changed.outputs.sql_files_diff }} --dialect polyglot --line-length 120
+      - name: Commit Sqlfmt changes
+        run: |
+          git config --local user.email "<githubusername>@users.noreply.github.com"
+          git config --local user.name "sqlfmt-bot"
+          git commit --all -m "Apply sqlfmt changes via GH bot" || true
+          git push "https://${{github.actor}}:${{secrets.SOURCE_PUSH_TOKEN}}@github.com/${{github.repository}}.git"
+          gh pr comment ${{ github.ref_name }} -b "🚨 Make sure to **git pull** locally before making changes 🚨"
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
